@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react';
 import { ChevronLeft, ChevronRight, Download, RotateCcw, Trash2, Check, Plus, UserMinus, Shuffle } from 'lucide-react';
 import type { Rounder, Admission, DistributionResult, TeamLetter, WizardStep, CensusSnapshot } from '../types';
-import { TEAM_FLOORS, FLOORS } from '../types';
+import { TEAM_FLOORS } from '../types';
 import { SaturdayTransition } from './SaturdayTransition';
 import { BulkImport } from './BulkImport';
 import { CensusSnapshotView } from './CensusSnapshot';
