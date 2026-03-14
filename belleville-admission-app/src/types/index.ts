@@ -1,5 +1,5 @@
 // Team letters (A-K, excluding H which is admissions)
-export const TEAM_LETTERS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'I', 'J', 'K'] as const;
+export const TEAM_LETTERS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'I', 'J', 'K', 'L'] as const;
 export type TeamLetter = typeof TEAM_LETTERS[number];
 
 // Fixed team floor assignments (cannot be changed)
@@ -14,6 +14,7 @@ export const TEAM_FLOORS: Record<TeamLetter, { floor: string; isFloating: boolea
   'I': { floor: '2C', isFloating: false },
   'J': { floor: '4S', isFloating: false },
   'K': { floor: '2S', isFloating: false },
+  'L': { floor: 'Floating', isFloating: true },
 };
 
 // Rounder state (fully persisted to localStorage)
@@ -99,9 +100,12 @@ export type Floor = typeof FLOORS[number];
 export const CAP_PATIENTS = 17;
 export const ALPHA = 0.88; // Increased from 0.685 to reduce disparity between high/low census doctors
 
+// Default teams (excludes surge team L)
+export const DEFAULT_TEAM_LETTERS: readonly TeamLetter[] = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'I', 'J', 'K'];
+
 // Helper to create default rounders
 export function createDefaultRounders(): Rounder[] {
-  return TEAM_LETTERS.map(letter => ({
+  return DEFAULT_TEAM_LETTERS.map(letter => ({
     id: letter,
     name: `Team ${letter}`,
     floor: TEAM_FLOORS[letter].floor,

@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
-import { ChevronLeft, ChevronRight, Download, RotateCcw, Trash2, Check } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Download, RotateCcw, Trash2, Check, Plus, UserMinus } from 'lucide-react';
 import type { Rounder, Admission, DistributionResult, TeamLetter, WizardStep, CensusSnapshot } from '../types';
+import { TEAM_FLOORS } from '../types';
 import { SaturdayTransition } from './SaturdayTransition';
 import { BulkImport } from './BulkImport';
 import { CensusSnapshotView } from './CensusSnapshot';
@@ -182,6 +183,34 @@ export function WeekendWizard({
               </button>
             </div>
 
+            {/* Active Teams Management */}
+            <div className="flex items-center gap-3 p-3 bg-gray-700/50 border border-gray-600 rounded">
+              <span className="text-sm text-gray-300 whitespace-nowrap">
+                Active teams: <strong className="text-white">{rounders.length}</strong>
+              </span>
+              {availableTeams.length > 0 && (
+                <div className="flex items-center gap-2 ml-auto">
+                  <select
+                    id="wizard-add-team"
+                    className="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-white text-sm focus:ring-2 focus:ring-blue-500"
+                    defaultValue=""
+                    onChange={e => {
+                      if (e.target.value) {
+                        onAddRounder(e.target.value as TeamLetter);
+                        e.target.value = '';
+                      }
+                    }}
+                  >
+                    <option value="" disabled>Add team...</option>
+                    {availableTeams.map(t => (
+                      <option key={t} value={t}>Team {t} ({TEAM_FLOORS[t].floor})</option>
+                    ))}
+                  </select>
+                  <Plus className="w-4 h-4 text-green-400" />
+                </div>
+              )}
+            </div>
+
             {/* Census Table */}
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -191,6 +220,7 @@ export function WeekendWizard({
                     <th className="text-left py-2 px-2">Provider Name</th>
                     <th className="text-left py-2 px-2">Floor</th>
                     <th className="text-left py-2 px-2">Current Census</th>
+                    <th className="text-center py-2 px-2 w-10"></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -220,6 +250,16 @@ export function WeekendWizard({
                           className="bg-gray-700 border border-gray-600 rounded px-2 py-1 w-20 text-white focus:ring-2 focus:ring-blue-500"
                           min="0"
                         />
+                      </td>
+                      <td className="py-3 px-2 text-center">
+                        <button
+                          onClick={() => onRemoveRounder(r.id)}
+                          disabled={rounders.length <= 1}
+                          className="text-red-400 hover:text-red-300 disabled:text-gray-600 disabled:cursor-not-allowed transition-colors"
+                          title={`Remove Team ${r.id}`}
+                        >
+                          <UserMinus className="w-4 h-4" />
+                        </button>
                       </td>
                     </tr>
                   ))}
