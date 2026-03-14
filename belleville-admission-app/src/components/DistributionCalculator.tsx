@@ -1,16 +1,20 @@
 import { Calculator } from 'lucide-react';
 import type { DistributionResult } from '../types';
+import { calculateRebalance } from '../utils/rebalanceEngine';
+import { RebalancePanel } from './RebalancePanel';
 
 interface DistributionCalculatorProps {
   distribution: DistributionResult | null;
   poolCount: number;
   onCalculate: () => void;
+  onApplyRebalance?: (finalCensus: Record<string, number>) => void;
 }
 
 export function DistributionCalculator({
   distribution,
   poolCount,
-  onCalculate
+  onCalculate,
+  onApplyRebalance
 }: DistributionCalculatorProps) {
   return (
     <div className="space-y-4">
@@ -25,6 +29,17 @@ export function DistributionCalculator({
           <Calculator className="w-5 h-5" />
           Calculate Distribution
         </button>
+
+        {distribution && (
+          <div className="text-sm text-gray-400 mt-2">
+            Patients in pool: {poolCount} | Patients assigned: {distribution.assignmentOrder.length}
+            {poolCount !== distribution.assignmentOrder.length && (
+              <span className="text-red-400 font-semibold ml-2">
+                ⚠ {poolCount - distribution.assignmentOrder.length} patient(s) not assigned!
+              </span>
+            )}
+          </div>
+        )}
 
         {distribution && (
           <div className="mt-6 space-y-4">
@@ -150,6 +165,13 @@ export function DistributionCalculator({
                 </p>
               </div>
             </div>
+
+            {distribution.summary.length > 0 && onApplyRebalance && (
+              <RebalancePanel
+                rebalance={calculateRebalance(distribution.summary)}
+                onApplyRebalance={onApplyRebalance}
+              />
+            )}
           </div>
         )}
 

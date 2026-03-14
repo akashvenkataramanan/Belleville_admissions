@@ -138,13 +138,13 @@ export function calculateDistribution(
     // Apply adjustments while respecting capacity constraints
     adjustments.forEach(({ rounder, adjustment }) => {
       if (adjustment > 0) {
-        // Increase quota for high-census doctors
+        // Increase quota for low-census doctors (below average)
         const maxIncrease = rounder.capacity - rounder.quota;
         const actualIncrease = Math.min(adjustment, maxIncrease);
         rounder.quota += actualIncrease;
         rounder.remainingQuota += actualIncrease;
       } else if (adjustment < 0) {
-        // Decrease quota for low-census doctors
+        // Decrease quota for high-census doctors (above average)
         const maxDecrease = rounder.quota;
         const actualDecrease = Math.min(Math.abs(adjustment), maxDecrease);
         rounder.quota -= actualDecrease;
@@ -152,7 +152,21 @@ export function calculateDistribution(
       }
     });
 
-    // Distribute remainders
+    // Normalize quotas so total doesn't exceed N
+    const totalQuota = rounderStates.reduce((sum, r) => sum + r.quota, 0);
+    if (totalQuota > N) {
+      let excess = totalQuota - N;
+      const sortedByQuota = [...rounderStates].sort((a, b) => b.quota - a.quota);
+      for (const r of sortedByQuota) {
+        if (excess <= 0) break;
+        const reduction = Math.min(r.quota, excess);
+        r.quota -= reduction;
+        r.remainingQuota -= reduction;
+        excess -= reduction;
+      }
+    }
+
+    // Census-aware gap-filling for remainder patients
     let assigned = rounderStates.reduce((sum, r) => sum + r.quota, 0);
     let remaining = N - assigned;
 
@@ -161,19 +175,15 @@ export function calculateDistribution(
       if (eligible.length === 0) break;
 
       eligible.sort((a, b) => {
-        // Priority 1: LOWER current census (moved to first position for edge case fairness)
-        if (a.currentCensus !== b.currentCensus) return a.currentCensus - b.currentCensus;
-        // Priority 2: Higher remainder value
-        if ((b.remainder ?? 0) !== (a.remainder ?? 0)) return (b.remainder ?? 0) - (a.remainder ?? 0);
-        // Priority 3: Higher weight
-        if (b.weight !== a.weight) return b.weight - a.weight;
-        // Priority 4: Alphabetical
+        const aProjected = a.currentCensus + a.quota;
+        const bProjected = b.currentCensus + b.quota;
+        if (aProjected !== bProjected) return aProjected - bProjected;
+        if (a.capacity !== b.capacity) return b.capacity - a.capacity;
         return a.id.localeCompare(b.id);
       });
 
       eligible[0].quota++;
       eligible[0].remainingQuota++;
-      eligible[0].remainder = 0;
       remaining--;
     }
 
@@ -267,6 +277,38 @@ export function calculateDistribution(
         assignedFloor: targetRounder.floor,
         reason: isGeoMatch ? 'geo_match_within_quota' : 'proportional_within_quota',
         reasonLabel: isGeoMatch ? 'Geographic Match (Within Quota)' : 'Proportional (Quota-Based)'
+      });
+    });
+
+    // Safety net: assign any remaining unassigned patients
+    poolAdmissions.forEach((patient, idx) => {
+      if (assignedIndices.has(idx)) return;
+      const alreadyAssigned = result.assignmentOrder.some(a => a.patientId === patient.patientName);
+      if (alreadyAssigned) return;
+
+      const sorted = [...rounderStates].sort((a, b) => {
+        const aTotal = a.currentCensus + a.assignedCount;
+        const bTotal = b.currentCensus + b.assignedCount;
+        if (aTotal !== bTotal) return aTotal - bTotal;
+        return a.id.localeCompare(b.id);
+      });
+
+      const targetRounder = sorted[0];
+      targetRounder.assignedPatients.push({ ...patient, reason: 'safety_catchall' });
+      targetRounder.assignedCount++;
+      assignedIndices.add(idx);
+      result.metrics.proportionalAssignments++;
+
+      assignmentCounter++;
+      result.assignmentOrder.push({
+        order: assignmentCounter,
+        patientId: patient.patientName,
+        floor: patient.floor,
+        assignedTo: targetRounder.name,
+        assignedToId: targetRounder.id,
+        assignedFloor: targetRounder.floor,
+        reason: 'safety_catchall',
+        reasonLabel: 'Safety Catchall (Unmatched)'
       });
     });
   }

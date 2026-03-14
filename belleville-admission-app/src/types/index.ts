@@ -109,3 +109,30 @@ export function createDefaultRounders(): Rounder[] {
     currentCensus: 0
   }));
 }
+
+// Saturday transition types
+export type TransitionType = 'replace' | 'gain' | 'lose';
+
+export interface TransferInstruction {
+  fromTeam: TeamLetter;
+  fromName: string;
+  toTeam: TeamLetter;
+  toName: string;
+  patientCount: number;
+}
+
+export interface TransitionResult {
+  transfers: TransferInstruction[];
+  updatedRounders: Rounder[];
+  finalCensus: Record<string, number>;
+  maxDifference: number;
+}
+
+// Wizard types
+export type WizardStep = 'census' | 'transitions' | 'admissions' | 'distribute' | 'review';
+
+export interface CensusSnapshot {
+  timestamp: number;
+  label: string;
+  data: Record<string, number>;
+}

@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo } from 'react';
-import { Settings, Plus, Calculator, Users, BarChart3, BookOpen } from 'lucide-react';
+import { Settings, Plus, Calculator, Users, BarChart3, BookOpen, ArrowLeftRight, Wand2 } from 'lucide-react';
 import { useLocalStorage } from './hooks/useLocalStorage';
 import { calculateDistribution } from './utils/distributionAlgorithm';
 import { Header } from './components/Header';
@@ -9,6 +9,8 @@ import { DistributionCalculator } from './components/DistributionCalculator';
 import { AssignmentOrder } from './components/AssignmentOrder';
 import { FlowChart } from './components/FlowChart';
 import { AlgorithmGuide } from './components/AlgorithmGuide';
+import { SaturdayTransition } from './components/SaturdayTransition';
+import { WeekendWizard } from './components/WeekendWizard';
 import type {
   Rounder,
   Admission,
@@ -20,6 +22,7 @@ import { createDefaultRounders, TEAM_LETTERS, TEAM_FLOORS } from './types';
 
 function App() {
   const [activeTab, setActiveTab] = useState('setup');
+  const [wizardMode, setWizardMode] = useState(true);
 
   // Fully persisted rounder state (including census)
   const [rounders, setRounders] = useLocalStorage<Rounder[]>(
@@ -42,6 +45,7 @@ function App() {
   // Tab definitions
   const tabs: Tab[] = [
     { id: 'setup', label: 'Rounder Setup', icon: Settings },
+    { id: 'transition', label: 'Transitions', icon: ArrowLeftRight },
     { id: 'admissions', label: 'New Admissions', icon: Plus },
     { id: 'calculator', label: 'Distribution', icon: Calculator },
     { id: 'assignments', label: 'Assignment Order', icon: Users },
@@ -108,77 +112,156 @@ function App() {
     setDistribution(result);
   }, [rounders, admissions]);
 
+  const setRoundersDirectly = useCallback((newRounders: Rounder[]) => {
+    setRounders(newRounders);
+  }, [setRounders]);
+
+  const handleApplyRebalance = useCallback((finalCensus: Record<string, number>) => {
+    setRounders(prev => prev.map(r => ({
+      ...r,
+      currentCensus: finalCensus[r.id] ?? r.currentCensus
+    })));
+    setDistribution(null); // Clear old results since census changed
+  }, [setRounders]);
+
+  const bulkAddAdmissions = useCallback((items: Array<{ floor: string; patientName: string }>) => {
+    const newAdmissions: Admission[] = items.map((item, i) => ({
+      id: Date.now() + i + Math.random(),
+      admittedBy: 'non-rounder',
+      floor: item.floor,
+      patientName: item.patientName
+    }));
+    setAdmissions(prev => [...prev, ...newAdmissions]);
+  }, []);
+
+  const clearSession = useCallback(() => {
+    setAdmissions([]);
+    setDistribution(null);
+  }, []);
+
   const poolCount = admissions.filter(a => a.admittedBy === 'non-rounder').length;
 
   return (
     <div className="min-h-screen bg-gray-900 text-gray-100">
       <Header />
 
-      {/* Tabs */}
-      <div className="bg-gray-800 border-b border-gray-700 px-2 overflow-x-auto no-print">
-        <div className="flex gap-1 min-w-max">
-          {tabs.map(tab => {
-            const Icon = tab.icon;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center gap-2 px-4 py-3 border-b-2 transition-colors whitespace-nowrap ${
-                  activeTab === tab.id
-                    ? 'border-blue-500 text-blue-400 bg-gray-750'
-                    : 'border-transparent text-gray-400 hover:text-gray-200'
-                }`}
-              >
-                <Icon className="w-4 h-4" />
-                <span className="text-sm font-medium">{tab.label}</span>
-              </button>
-            );
-          })}
+      {/* Mode Toggle */}
+      <div className="bg-gray-800 border-b border-gray-700 px-4 py-2 flex items-center justify-between no-print">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setWizardMode(!wizardMode)}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+              wizardMode ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+            }`}
+          >
+            <Wand2 className="w-4 h-4" />
+            {wizardMode ? 'Wizard Mode' : 'Tab Mode'}
+          </button>
         </div>
       </div>
 
-      {/* Content */}
-      <div className="p-4 max-w-7xl mx-auto">
-        {activeTab === 'setup' && (
-          <RounderSetup
+      {wizardMode ? (
+        /* Wizard Mode */
+        <div className="p-4 max-w-7xl mx-auto">
+          <WeekendWizard
             rounders={rounders}
+            admissions={admissions}
+            distribution={distribution}
             availableTeams={availableTeams}
             onUpdateRounder={updateRounder}
+            onUpdateRounders={setRoundersDirectly}
             onAddRounder={addRounder}
             onRemoveRounder={removeRounder}
-          />
-        )}
-
-        {activeTab === 'admissions' && (
-          <AdmissionsInput
-            admissions={admissions}
-            rounders={rounders}
             onAddAdmission={addAdmission}
             onRemoveAdmission={removeAdmission}
             onUpdateAdmission={updateAdmission}
-          />
-        )}
-
-        {activeTab === 'calculator' && (
-          <DistributionCalculator
-            distribution={distribution}
-            poolCount={poolCount}
+            onBulkAddAdmissions={bulkAddAdmissions}
             onCalculate={handleCalculate}
+            onApplyRebalance={handleApplyRebalance}
+            onClearSession={clearSession}
+            poolCount={poolCount}
           />
-        )}
+        </div>
+      ) : (
+        <>
+          {/* Tabs */}
+          <div className="bg-gray-800 border-b border-gray-700 px-2 overflow-x-auto no-print">
+            <div className="flex gap-1 min-w-max">
+              {tabs.map(tab => {
+                const Icon = tab.icon;
+                return (
+                  <button
+                    key={tab.id}
+                    onClick={() => setActiveTab(tab.id)}
+                    className={`flex items-center gap-2 px-4 py-3 border-b-2 transition-colors whitespace-nowrap ${
+                      activeTab === tab.id
+                        ? 'border-blue-500 text-blue-400 bg-gray-750'
+                        : 'border-transparent text-gray-400 hover:text-gray-200'
+                    }`}
+                  >
+                    <Icon className="w-4 h-4" />
+                    <span className="text-sm font-medium">{tab.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
 
-        {activeTab === 'assignments' && (
-          <AssignmentOrder distribution={distribution} />
-        )}
+          {/* Content */}
+          <div className="p-4 max-w-7xl mx-auto">
+            {activeTab === 'setup' && (
+              <RounderSetup
+                rounders={rounders}
+                availableTeams={availableTeams}
+                onUpdateRounder={updateRounder}
+                onAddRounder={addRounder}
+                onRemoveRounder={removeRounder}
+              />
+            )}
 
-        {activeTab === 'sankey' && (
-          <FlowChart distribution={distribution} />
-        )}
+            {activeTab === 'transition' && (
+              <SaturdayTransition
+                rounders={rounders}
+                availableTeams={availableTeams}
+                onUpdateRounders={setRoundersDirectly}
+                onAddRounder={addRounder}
+                onRemoveRounder={removeRounder}
+              />
+            )}
 
-        {activeTab === 'legend' && (
-          <AlgorithmGuide />
-        )}
-      </div>
+            {activeTab === 'admissions' && (
+              <AdmissionsInput
+                admissions={admissions}
+                rounders={rounders}
+                onAddAdmission={addAdmission}
+                onRemoveAdmission={removeAdmission}
+                onUpdateAdmission={updateAdmission}
+              />
+            )}
+
+            {activeTab === 'calculator' && (
+              <DistributionCalculator
+                distribution={distribution}
+                poolCount={poolCount}
+                onCalculate={handleCalculate}
+                onApplyRebalance={handleApplyRebalance}
+              />
+            )}
+
+            {activeTab === 'assignments' && (
+              <AssignmentOrder distribution={distribution} />
+            )}
+
+            {activeTab === 'sankey' && (
+              <FlowChart distribution={distribution} />
+            )}
+
+            {activeTab === 'legend' && (
+              <AlgorithmGuide />
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }
