@@ -1,5 +1,6 @@
+import { useState } from 'react';
 import { Calculator } from 'lucide-react';
-import type { DistributionResult } from '../types';
+import type { DistributionResult, TeamLetter } from '../types';
 import { calculateRebalance } from '../utils/rebalanceEngine';
 import { RebalancePanel } from './RebalancePanel';
 
@@ -8,14 +9,69 @@ interface DistributionCalculatorProps {
   poolCount: number;
   onCalculate: () => void;
   onApplyRebalance?: (finalCensus: Record<string, number>) => void;
+  onUpdateDistribution?: (distribution: DistributionResult) => void;
+}
+
+function reassignPatient(
+  dist: DistributionResult,
+  patientName: string,
+  fromRounderId: TeamLetter,
+  toRounderId: TeamLetter
+): DistributionResult {
+  const result = structuredClone(dist);
+
+  const fromSummary = result.summary.find(s => s.rounderId === fromRounderId);
+  const toSummary = result.summary.find(s => s.rounderId === toRounderId);
+  if (!fromSummary || !toSummary) return dist;
+
+  const patientIdx = fromSummary.admissions.findIndex(a => a.patientName === patientName);
+  if (patientIdx === -1) return dist;
+
+  const [patient] = fromSummary.admissions.splice(patientIdx, 1);
+  patient.reason = 'manual_reassignment';
+  toSummary.admissions.push(patient);
+
+  fromSummary.newAdmissions--;
+  fromSummary.endCensus--;
+  toSummary.newAdmissions++;
+  toSummary.endCensus++;
+
+  // Update assignmentOrder
+  const orderEntry = result.assignmentOrder.find(
+    a => a.patientId === patientName && a.assignedToId === fromRounderId
+  );
+  if (orderEntry) {
+    orderEntry.assignedTo = toSummary.rounderName;
+    orderEntry.assignedToId = toRounderId;
+    orderEntry.assignedFloor = toSummary.floor;
+    orderEntry.reason = 'manual_reassignment';
+    orderEntry.reasonLabel = 'Manual';
+  }
+
+  return result;
 }
 
 export function DistributionCalculator({
   distribution,
   poolCount,
   onCalculate,
-  onApplyRebalance
+  onApplyRebalance,
+  onUpdateDistribution
 }: DistributionCalculatorProps) {
+  const [reassigning, setReassigning] = useState<{ patientName: string; fromId: TeamLetter } | null>(null);
+
+  const handleReassign = (patientName: string, fromId: TeamLetter, toId: TeamLetter) => {
+    if (!distribution || !onUpdateDistribution) return;
+    const updated = reassignPatient(distribution, patientName, fromId, toId);
+    onUpdateDistribution(updated);
+    setReassigning(null);
+  };
+
+  // Compute target for balance bars
+  const target = distribution
+    ? distribution.summary.reduce((sum, s) => sum + s.endCensus, 0) / distribution.summary.length
+    : 0;
+
   return (
     <div className="space-y-4">
       <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
@@ -45,6 +101,10 @@ export function DistributionCalculator({
           <div className="mt-6 space-y-4">
             <h3 className="text-lg font-semibold text-green-400">Distribution Results</h3>
 
+            {onUpdateDistribution && (
+              <p className="text-xs text-gray-500">Click a patient name to reassign them to another rounder.</p>
+            )}
+
             {/* Metrics Summary */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="bg-green-600 p-4 rounded border-2 border-green-400">
@@ -70,50 +130,127 @@ export function DistributionCalculator({
                     <th className="text-center py-2 px-2">Start</th>
                     <th className="text-center py-2 px-2">+New</th>
                     <th className="text-center py-2 px-2">End</th>
+                    <th className="text-center py-2 px-2">Balance</th>
                     <th className="text-left py-2 px-2">Assigned Patients (No PHI)</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {distribution.summary.map(s => (
-                    <tr key={s.rounderId} className="border-b border-gray-700/50">
-                      <td className="py-3 px-2 font-medium">{s.rounderName}</td>
-                      <td className="py-3 px-2 text-gray-400 text-xs">{s.floor}</td>
-                      <td className="py-3 px-2 text-center">{s.startCensus}</td>
-                      <td className="py-3 px-2 text-center">
-                        <span className="bg-green-700 text-green-100 px-2 py-1 rounded text-xs">
-                          +{s.newAdmissions}
-                        </span>
-                      </td>
-                      <td className="py-3 px-2 text-center font-bold">
-                        <span className="text-green-400">
-                          {s.endCensus}
-                        </span>
-                      </td>
-                      <td className="py-3 px-2 text-xs">
-                        {s.admissions.length > 0 ? (
-                          <div className="space-y-1">
-                            {s.admissions.map((a, idx) => (
-                              <div key={idx} className="flex items-center gap-2">
-                                <span className="text-gray-300">{a.patientName}</span>
-                                <span className={`text-xs px-1 rounded ${
-                                  a.reason === 'geo_match_within_quota' ? 'bg-green-700 text-green-200' :
-                                  a.reason === 'proportional_within_quota' ? 'bg-purple-700 text-purple-200' :
-                                  a.reason === 'overflow_waterfill' ? 'bg-orange-700 text-orange-200' :
-                                  'bg-gray-700 text-gray-200'
-                                }`}>
-                                  {a.reason === 'geo_match_within_quota' ? 'G' :
-                                   a.reason === 'proportional_within_quota' ? 'P' :
-                                   a.reason === 'overflow_waterfill' ? 'O' : '?'}
-                                </span>
-                              </div>
-                            ))}
+                  {distribution.summary.map(s => {
+                    const deviation = s.endCensus - target;
+                    const maxDev = Math.max(
+                      ...distribution.summary.map(x => Math.abs(x.endCensus - target)),
+                      1
+                    );
+                    const barWidth = Math.min(Math.abs(deviation) / maxDev * 100, 100);
+
+                    return (
+                      <tr key={s.rounderId} className="border-b border-gray-700/50">
+                        <td className="py-3 px-2 font-medium">{s.rounderName}</td>
+                        <td className="py-3 px-2 text-gray-400 text-xs">{s.floor}</td>
+                        <td className="py-3 px-2 text-center">{s.startCensus}</td>
+                        <td className="py-3 px-2 text-center">
+                          <span className="bg-green-700 text-green-100 px-2 py-1 rounded text-xs">
+                            +{s.newAdmissions}
+                          </span>
+                        </td>
+                        <td className="py-3 px-2 text-center font-bold">
+                          <span className="text-green-400">
+                            {s.endCensus}
+                          </span>
+                        </td>
+                        <td className="py-3 px-2">
+                          <div className="flex items-center gap-1.5 min-w-[80px]">
+                            <div className="flex-1 h-3 bg-gray-700 rounded overflow-hidden relative">
+                              <div
+                                className={`h-full rounded ${
+                                  Math.abs(deviation) < 0.5
+                                    ? 'bg-green-500'
+                                    : deviation > 0
+                                    ? 'bg-red-500'
+                                    : 'bg-blue-500'
+                                }`}
+                                style={{ width: `${barWidth}%` }}
+                              />
+                            </div>
+                            <span className={`text-xs font-mono w-8 text-right ${
+                              Math.abs(deviation) < 0.5
+                                ? 'text-green-400'
+                                : deviation > 0
+                                ? 'text-red-400'
+                                : 'text-blue-400'
+                            }`}>
+                              {deviation > 0 ? '+' : ''}{Math.round(deviation * 10) / 10}
+                            </span>
                           </div>
-                        ) : (
-                          <span className="text-gray-500">None</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
+                        </td>
+                        <td className="py-3 px-2 text-xs">
+                          {s.admissions.length > 0 ? (
+                            <div className="space-y-1">
+                              {s.admissions.map((a, idx) => {
+                                const isReassigning =
+                                  reassigning?.patientName === a.patientName &&
+                                  reassigning?.fromId === s.rounderId;
+
+                                return (
+                                  <div key={idx} className="flex items-center gap-2">
+                                    {onUpdateDistribution ? (
+                                      <div className="relative">
+                                        <button
+                                          onClick={() =>
+                                            setReassigning(
+                                              isReassigning
+                                                ? null
+                                                : { patientName: a.patientName, fromId: s.rounderId }
+                                            )
+                                          }
+                                          className="text-gray-300 hover:text-white hover:underline cursor-pointer"
+                                        >
+                                          {a.patientName}
+                                        </button>
+                                        {isReassigning && (
+                                          <div className="absolute left-0 top-full z-10 mt-1 bg-gray-900 border border-gray-600 rounded shadow-lg p-1 min-w-[160px]">
+                                            {distribution.summary
+                                              .filter(other => other.rounderId !== s.rounderId)
+                                              .map(other => (
+                                                <button
+                                                  key={other.rounderId}
+                                                  onClick={() =>
+                                                    handleReassign(a.patientName, s.rounderId, other.rounderId)
+                                                  }
+                                                  className="block w-full text-left px-2 py-1 text-xs hover:bg-gray-700 rounded text-gray-300"
+                                                >
+                                                  {other.rounderName} (end: {other.endCensus})
+                                                </button>
+                                              ))}
+                                          </div>
+                                        )}
+                                      </div>
+                                    ) : (
+                                      <span className="text-gray-300">{a.patientName}</span>
+                                    )}
+                                    <span className={`text-xs px-1 rounded ${
+                                      a.reason === 'geo_match_within_quota' ? 'bg-green-700 text-green-200' :
+                                      a.reason === 'proportional_within_quota' ? 'bg-purple-700 text-purple-200' :
+                                      a.reason === 'overflow_waterfill' ? 'bg-orange-700 text-orange-200' :
+                                      a.reason === 'manual_reassignment' ? 'bg-teal-700 text-teal-200' :
+                                      'bg-gray-700 text-gray-200'
+                                    }`}>
+                                      {a.reason === 'geo_match_within_quota' ? 'G' :
+                                       a.reason === 'proportional_within_quota' ? 'P' :
+                                       a.reason === 'overflow_waterfill' ? 'O' :
+                                       a.reason === 'manual_reassignment' ? 'M' : '?'}
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <span className="text-gray-500">None</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -130,6 +267,10 @@ export function DistributionCalculator({
               <div className="flex items-center gap-1">
                 <span className="bg-orange-700 text-orange-200 px-2 py-1 rounded">O</span>
                 <span className="text-gray-400">Overflow</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <span className="bg-teal-700 text-teal-200 px-2 py-1 rounded">M</span>
+                <span className="text-gray-400">Manual Reassignment</span>
               </div>
             </div>
 

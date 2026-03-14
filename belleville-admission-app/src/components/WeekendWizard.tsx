@@ -25,8 +25,11 @@ interface WeekendWizardProps {
   onBulkAddAdmissions: (items: Array<{ floor: string; patientName: string }>) => void;
   onCalculate: () => void;
   onApplyRebalance: (finalCensus: Record<string, number>) => void;
+  onUpdateDistribution: (distribution: DistributionResult) => void;
   onClearSession: () => void;
   poolCount: number;
+  onFieldFocus?: () => void;
+  onFieldBlur?: () => void;
 }
 
 const STEPS: { key: WizardStep; label: string }[] = [
@@ -52,8 +55,11 @@ export function WeekendWizard({
   onBulkAddAdmissions,
   onCalculate,
   onApplyRebalance,
+  onUpdateDistribution,
   onClearSession,
   poolCount,
+  onFieldFocus,
+  onFieldBlur,
 }: WeekendWizardProps) {
   const [currentStep, setCurrentStep] = useState<WizardStep>('census');
   const [preSnapshot, setPreSnapshot] = useState<CensusSnapshot | null>(null);
@@ -283,15 +289,48 @@ export function WeekendWizard({
                         <input
                           type="text"
                           value={r.name}
+                          onFocus={onFieldFocus}
+                          onBlur={onFieldBlur}
                           onChange={e => onUpdateRounder(r.id, 'name', e.target.value)}
                           className="bg-gray-700 border border-gray-600 rounded px-2 py-1 w-full max-w-[150px] text-white focus:ring-2 focus:ring-blue-500"
                         />
                       </td>
-                      <td className="py-3 px-2 text-gray-400 text-xs">{r.floor}</td>
+                      <td className="py-3 px-2">
+                        <select
+                          value={r.isFloating ? 'Floating' : r.floor}
+                          onChange={(e) => {
+                            const newValue = e.target.value;
+                            if (newValue === 'Floating') {
+                              onUpdateRounder(r.id, 'floor', 'Floating');
+                              onUpdateRounder(r.id, 'isFloating', true);
+                            } else {
+                              onUpdateRounder(r.id, 'floor', newValue);
+                              onUpdateRounder(r.id, 'isFloating', false);
+                            }
+                          }}
+                          className={`rounded px-2 py-1 text-sm font-medium focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                            r.isFloating
+                              ? 'bg-purple-700/50 text-purple-200 border border-purple-600'
+                              : 'bg-gray-700 text-gray-200 border border-gray-600'
+                          }`}
+                        >
+                          <option value="1S">1S</option>
+                          <option value="1C">1C</option>
+                          <option value="2S">2S</option>
+                          <option value="2C">2C</option>
+                          <option value="3S">3S</option>
+                          <option value="4S">4S</option>
+                          <option value="2NE">2NE</option>
+                          <option value="2N">2N</option>
+                          <option value="Floating">Floating</option>
+                        </select>
+                      </td>
                       <td className="py-3 px-2">
                         <input
                           type="number"
                           value={r.currentCensus}
+                          onFocus={onFieldFocus}
+                          onBlur={onFieldBlur}
                           onChange={e => onUpdateRounder(r.id, 'currentCensus', parseInt(e.target.value) || 0)}
                           className="bg-gray-700 border border-gray-600 rounded px-2 py-1 w-20 text-white focus:ring-2 focus:ring-blue-500"
                           min="0"
@@ -487,6 +526,7 @@ export function WeekendWizard({
                 handleCalculateAndSnapshot();
               }}
               onApplyRebalance={onApplyRebalance}
+              onUpdateDistribution={onUpdateDistribution}
             />
           </div>
         )}

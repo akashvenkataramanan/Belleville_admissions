@@ -2,7 +2,7 @@
 export const TEAM_LETTERS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'I', 'J', 'K', 'L'] as const;
 export type TeamLetter = typeof TEAM_LETTERS[number];
 
-// Fixed team floor assignments (cannot be changed)
+// Default team floor assignments
 export const TEAM_FLOORS: Record<TeamLetter, { floor: string; isFloating: boolean }> = {
   'A': { floor: 'Floating', isFloating: true },
   'B': { floor: '2N', isFloating: false },

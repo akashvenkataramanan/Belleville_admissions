@@ -1,6 +1,7 @@
-import { useState, useCallback, useMemo } from 'react';
-import { Settings, Plus, Calculator, Users, BarChart3, BookOpen, ArrowLeftRight, Wand2 } from 'lucide-react';
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
+import { Settings, Plus, Calculator, Users, BarChart3, BookOpen, ArrowLeftRight, Wand2, Undo2 } from 'lucide-react';
 import { useLocalStorage } from './hooks/useLocalStorage';
+import { useUndoStack } from './hooks/useUndoStack';
 import { calculateDistribution } from './utils/distributionAlgorithm';
 import { Header } from './components/Header';
 import { RounderSetup } from './components/RounderSetup';
@@ -36,6 +37,53 @@ function App() {
   // Distribution results
   const [distribution, setDistribution] = useState<DistributionResult | null>(null);
 
+  // Undo stack
+  const { pushSnapshot, undo, canUndo, undoLabel } = useUndoStack();
+
+  // Ref to capture state on focus for text/number inputs
+  const focusSnapshotRef = useRef<{ saved: boolean }>({ saved: false });
+
+  const snapshot = useCallback((label: string) => {
+    pushSnapshot({ rounders, admissions, distribution, label });
+  }, [pushSnapshot, rounders, admissions, distribution]);
+
+  // Handle undo
+  const handleUndo = useCallback(() => {
+    const prev = undo();
+    if (prev) {
+      setRounders(prev.rounders);
+      setAdmissions(prev.admissions);
+      setDistribution(prev.distribution);
+    }
+  }, [undo, setRounders]);
+
+  // Ctrl+Z / Cmd+Z keyboard shortcut
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) {
+        // Don't intercept if user is typing in an input/textarea
+        const tag = (e.target as HTMLElement)?.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+        e.preventDefault();
+        handleUndo();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [handleUndo]);
+
+  // Save snapshot on focus for text/number fields (before editing begins)
+  const handleFieldFocus = useCallback(() => {
+    if (!focusSnapshotRef.current.saved) {
+      snapshot('Edit field');
+      focusSnapshotRef.current.saved = true;
+    }
+  }, [snapshot]);
+
+  const handleFieldBlur = useCallback(() => {
+    focusSnapshotRef.current.saved = false;
+  }, []);
+
   // Calculate available teams (not currently active)
   const availableTeams = useMemo(() => {
     const activeIds = new Set(rounders.map(r => r.id));
@@ -64,6 +112,7 @@ function App() {
 
   // Add a team back to the active roster
   const addRounder = useCallback((teamLetter: TeamLetter) => {
+    snapshot('Add team');
     const teamInfo = TEAM_FLOORS[teamLetter];
     const newRounder: Rounder = {
       id: teamLetter,
@@ -78,27 +127,30 @@ function App() {
       const newList = [...prev, newRounder];
       return newList.sort((a, b) => a.id.localeCompare(b.id));
     });
-  }, [setRounders]);
+  }, [setRounders, snapshot]);
 
   // Remove a team from active roster
   const removeRounder = useCallback((id: TeamLetter) => {
     if (rounders.length <= 1) return; // Keep at least one rounder
+    snapshot('Remove team');
     setRounders(prev => prev.filter(r => r.id !== id));
-  }, [rounders.length, setRounders]);
+  }, [rounders.length, setRounders, snapshot]);
 
   // Admission handlers
   const addAdmission = useCallback(() => {
+    snapshot('Add admission');
     setAdmissions(prev => [...prev, {
       id: Date.now() + Math.random(),
       admittedBy: 'non-rounder',
       floor: '1S',
       patientName: `Patient ${prev.length + 1}`
     }]);
-  }, []);
+  }, [snapshot]);
 
   const removeAdmission = useCallback((id: number) => {
+    snapshot('Remove admission');
     setAdmissions(prev => prev.filter(a => a.id !== id));
-  }, []);
+  }, [snapshot]);
 
   const updateAdmission = useCallback((id: number, field: keyof Admission, value: string) => {
     setAdmissions(prev =>
@@ -108,23 +160,27 @@ function App() {
 
   // Distribution calculation
   const handleCalculate = useCallback(() => {
+    snapshot('Calculate distribution');
     const result = calculateDistribution(rounders, admissions);
     setDistribution(result);
-  }, [rounders, admissions]);
+  }, [rounders, admissions, snapshot]);
 
   const setRoundersDirectly = useCallback((newRounders: Rounder[]) => {
+    snapshot('Update rounders');
     setRounders(newRounders);
-  }, [setRounders]);
+  }, [setRounders, snapshot]);
 
   const handleApplyRebalance = useCallback((finalCensus: Record<string, number>) => {
+    snapshot('Apply rebalance');
     setRounders(prev => prev.map(r => ({
       ...r,
       currentCensus: finalCensus[r.id] ?? r.currentCensus
     })));
     setDistribution(null); // Clear old results since census changed
-  }, [setRounders]);
+  }, [setRounders, snapshot]);
 
   const bulkAddAdmissions = useCallback((items: Array<{ floor: string; patientName: string }>) => {
+    snapshot('Bulk add admissions');
     const newAdmissions: Admission[] = items.map((item, i) => ({
       id: Date.now() + i + Math.random(),
       admittedBy: 'non-rounder',
@@ -132,7 +188,12 @@ function App() {
       patientName: item.patientName
     }));
     setAdmissions(prev => [...prev, ...newAdmissions]);
-  }, []);
+  }, [snapshot]);
+
+  const updateDistribution = useCallback((newDistribution: DistributionResult) => {
+    snapshot('Reassign patient');
+    setDistribution(newDistribution);
+  }, [snapshot]);
 
   const clearSession = useCallback(() => {
     setAdmissions([]);
@@ -145,7 +206,7 @@ function App() {
     <div className="min-h-screen bg-gray-900 text-gray-100">
       <Header />
 
-      {/* Mode Toggle */}
+      {/* Mode Toggle + Undo */}
       <div className="bg-gray-800 border-b border-gray-700 px-4 py-2 flex items-center justify-between no-print">
         <div className="flex items-center gap-2">
           <button
@@ -158,6 +219,15 @@ function App() {
             {wizardMode ? 'Wizard Mode' : 'Tab Mode'}
           </button>
         </div>
+        <button
+          onClick={handleUndo}
+          disabled={!canUndo}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors bg-gray-700 text-gray-300 hover:bg-gray-600 disabled:bg-gray-800 disabled:text-gray-600 disabled:cursor-not-allowed"
+          title={canUndo ? `Undo: ${undoLabel}` : 'Nothing to undo'}
+        >
+          <Undo2 className="w-4 h-4" />
+          Undo
+        </button>
       </div>
 
       {wizardMode ? (
@@ -178,8 +248,11 @@ function App() {
             onBulkAddAdmissions={bulkAddAdmissions}
             onCalculate={handleCalculate}
             onApplyRebalance={handleApplyRebalance}
+            onUpdateDistribution={updateDistribution}
             onClearSession={clearSession}
             poolCount={poolCount}
+            onFieldFocus={handleFieldFocus}
+            onFieldBlur={handleFieldBlur}
           />
         </div>
       ) : (
@@ -245,6 +318,7 @@ function App() {
                 poolCount={poolCount}
                 onCalculate={handleCalculate}
                 onApplyRebalance={handleApplyRebalance}
+                onUpdateDistribution={updateDistribution}
               />
             )}
 
