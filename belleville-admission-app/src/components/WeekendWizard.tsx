@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react';
-import { ChevronLeft, ChevronRight, Download, RotateCcw, Trash2, Check, Plus, UserMinus } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Download, RotateCcw, Trash2, Check, Plus, UserMinus, Shuffle } from 'lucide-react';
 import type { Rounder, Admission, DistributionResult, TeamLetter, WizardStep, CensusSnapshot } from '../types';
-import { TEAM_FLOORS } from '../types';
+import { TEAM_FLOORS, FLOORS } from '../types';
 import { SaturdayTransition } from './SaturdayTransition';
 import { BulkImport } from './BulkImport';
 import { CensusSnapshotView } from './CensusSnapshot';
@@ -111,6 +111,42 @@ export function WeekendWizard({
     setCurrentStep('census');
   };
 
+  // Randomize census with realistic values (8-15 patients per provider)
+  const randomizeCensus = () => {
+    rounders.forEach(r => {
+      const census = Math.floor(Math.random() * 8) + 8; // 8-15
+      onUpdateRounder(r.id, 'currentCensus', census);
+    });
+  };
+
+  // Generate realistic random admissions (25-40 patients across floors)
+  // Weighted toward busier floors like 2N, 3S, 2C
+  const randomizeAdmissions = () => {
+    const floorWeights: { floor: string; weight: number }[] = [
+      { floor: '2N', weight: 5 },
+      { floor: '3S', weight: 4 },
+      { floor: '2C', weight: 4 },
+      { floor: '1C', weight: 3 },
+      { floor: '2S', weight: 3 },
+      { floor: '4S', weight: 3 },
+      { floor: '2NE', weight: 2 },
+      { floor: '1S', weight: 2 },
+    ];
+    const floorPool: string[] = [];
+    floorWeights.forEach(fw => {
+      for (let i = 0; i < fw.weight; i++) floorPool.push(fw.floor);
+    });
+
+    const count = Math.floor(Math.random() * 16) + 25; // 25-40 admissions
+    const items: Array<{ floor: string; patientName: string }> = [];
+    for (let i = 0; i < count; i++) {
+      const floor = floorPool[Math.floor(Math.random() * floorPool.length)];
+      const room = Math.floor(Math.random() * 40) + 100; // room 100-139
+      items.push({ floor, patientName: `${floor}-${room}` });
+    }
+    onBulkAddAdmissions(items);
+  };
+
   return (
     <div className="space-y-4">
       {/* Progress Bar */}
@@ -180,6 +216,15 @@ export function WeekendWizard({
                 className="bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded text-sm text-white transition-colors"
               >
                 Apply to All
+              </button>
+              <div className="border-l border-gray-600 h-6 mx-1" />
+              <button
+                onClick={randomizeCensus}
+                className="flex items-center gap-1.5 bg-amber-600 hover:bg-amber-700 px-3 py-1.5 rounded text-sm text-white transition-colors"
+                title="Fill with random realistic census values (8-15)"
+              >
+                <Shuffle className="w-3.5 h-3.5" />
+                Randomize
               </button>
             </div>
 
@@ -331,16 +376,28 @@ export function WeekendWizard({
                 <BulkImport onImport={onBulkAddAdmissions} />
               </div>
 
-              {/* Manual Entry */}
-              <div className="bg-gray-700/30 border border-gray-600 rounded-lg p-4">
+              {/* Manual Entry & Randomize */}
+              <div className="bg-gray-700/30 border border-gray-600 rounded-lg p-4 space-y-3">
                 <h3 className="text-sm font-semibold text-blue-400 mb-3">Manual Entry</h3>
                 <button
                   onClick={onAddAdmission}
-                  className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded text-sm text-white transition-colors mb-3"
+                  className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded text-sm text-white transition-colors"
                 >
                   + Add Admission
                 </button>
                 <p className="text-xs text-gray-400">Add one at a time, then edit floor and details below.</p>
+                <div className="border-t border-gray-600 pt-3">
+                  <h3 className="text-sm font-semibold text-amber-400 mb-2">Test Data</h3>
+                  <button
+                    onClick={randomizeAdmissions}
+                    className="flex items-center gap-1.5 bg-amber-600 hover:bg-amber-700 px-3 py-1.5 rounded text-sm text-white transition-colors"
+                    title="Generate 25-40 random admissions with realistic floor distribution"
+                  >
+                    <Shuffle className="w-3.5 h-3.5" />
+                    Randomize Admissions
+                  </button>
+                  <p className="text-xs text-gray-500 mt-1">Generates 25-40 patients across floors</p>
+                </div>
               </div>
             </div>
 
