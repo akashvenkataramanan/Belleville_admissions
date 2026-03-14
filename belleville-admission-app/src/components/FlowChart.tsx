@@ -104,7 +104,7 @@ export function FlowChart({ distribution }: FlowChartProps) {
 
                     <div className="flex items-center">
                       <div className={`px-3 py-2 rounded text-sm font-semibold min-w-[50px] text-center text-white ${
-                        s.hitCap ? 'bg-red-600' : 'bg-purple-600'
+                        'bg-purple-600'
                       }`}>
                         {s.endCensus}
                       </div>

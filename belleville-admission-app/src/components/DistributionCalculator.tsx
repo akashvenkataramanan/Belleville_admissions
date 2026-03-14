@@ -70,7 +70,6 @@ export function DistributionCalculator({
                     <th className="text-center py-2 px-2">Start</th>
                     <th className="text-center py-2 px-2">+New</th>
                     <th className="text-center py-2 px-2">End</th>
-                    <th className="text-center py-2 px-2">Status</th>
                     <th className="text-left py-2 px-2">Assigned Patients (No PHI)</th>
                   </tr>
                 </thead>
@@ -86,20 +85,9 @@ export function DistributionCalculator({
                         </span>
                       </td>
                       <td className="py-3 px-2 text-center font-bold">
-                        <span className={s.hitCap ? 'text-red-400' : 'text-green-400'}>
+                        <span className="text-green-400">
                           {s.endCensus}
                         </span>
-                      </td>
-                      <td className="py-3 px-2 text-center">
-                        {s.hitCap ? (
-                          <span className="text-xs bg-red-700 text-red-100 px-2 py-1 rounded">
-                            At Cap
-                          </span>
-                        ) : (
-                          <span className="text-xs bg-green-700 text-green-100 px-2 py-1 rounded">
-                            {(s.slack * 100).toFixed(0)}% slack
-                          </span>
-                        )}
                       </td>
                       <td className="py-3 px-2 text-xs">
                         {s.admissions.length > 0 ? (

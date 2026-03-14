@@ -54,9 +54,6 @@ export interface RounderSummary {
   startCensus: number;
   newAdmissions: number;
   endCensus: number;
-  slack: number;
-  overage: number;
-  hitCap: boolean;
   admissions: Array<Admission & { reason: string }>;
 }
 
@@ -74,10 +71,7 @@ export interface DistributionResult {
 
 // Internal state during algorithm execution
 export interface RounderState extends Rounder {
-  capacity: number;
-  slack: number;
   weight: number;
-  overage: number;
   assignedPatients: Array<Admission & { reason: string }>;
   assignedCount: number;
   quota: number;
@@ -97,7 +91,6 @@ export const FLOORS = ['1S', '1C', '2S', '2C', '3S', '4S', '2NE', '2N'] as const
 export type Floor = typeof FLOORS[number];
 
 // Algorithm constants
-export const CAP_PATIENTS = 17;
 export const ALPHA = 0.88; // Increased from 0.685 to reduce disparity between high/low census doctors
 
 // Default teams (excludes surge team L)

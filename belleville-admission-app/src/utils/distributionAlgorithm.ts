@@ -5,7 +5,6 @@ import type {
   RounderState,
   TeamLetter
 } from '../types';
-import { CAP_PATIENTS, ALPHA } from '../types';
 
 export function calculateDistribution(
   rounders: Rounder[],
@@ -25,24 +24,14 @@ export function calculateDistribution(
   let assignmentCounter = 0;
 
   // Initialize rounder states
-  const rounderStates: RounderState[] = rounders.map(r => {
-    const capacity = Math.max(0, CAP_PATIENTS - r.currentCensus);
-    const slack = capacity / CAP_PATIENTS;
-    const weight = Math.pow(slack, ALPHA);
-    const overage = Math.max(0, r.currentCensus - CAP_PATIENTS);
-
-    return {
-      ...r,
-      capacity,
-      slack,
-      weight,
-      overage,
-      assignedPatients: [],
-      assignedCount: 0,
-      quota: 0,
-      remainingQuota: 0
-    };
-  });
+  const rounderStates: RounderState[] = rounders.map(r => ({
+    ...r,
+    weight: 0,
+    assignedPatients: [],
+    assignedCount: 0,
+    quota: 0,
+    remainingQuota: 0
+  }));
 
   // Filter to only non-rounder admissions
   const poolAdmissions = admissions.filter(a => a.admittedBy === 'non-rounder');
@@ -55,258 +44,194 @@ export function calculateDistribution(
       startCensus: r.currentCensus,
       newAdmissions: 0,
       endCensus: r.currentCensus,
-      slack: r.slack,
-      overage: r.overage,
-      hitCap: r.currentCensus >= CAP_PATIENTS,
       admissions: []
     }));
     return result;
   }
 
   const N = poolAdmissions.length;
-  const totalCapacity = rounderStates.reduce((sum, r) => sum + r.capacity, 0);
 
-  // Check if overflow mode needed
-  if (totalCapacity < N) {
-    // Overflow mode: water-filling
-    poolAdmissions.forEach(admission => {
-      const sortedByOverage = [...rounderStates].sort((a, b) => {
-        const aCurrentTotal = a.currentCensus + a.assignedCount;
-        const bCurrentTotal = b.currentCensus + b.assignedCount;
-        const aOver = Math.max(0, aCurrentTotal - CAP_PATIENTS);
-        const bOver = Math.max(0, bCurrentTotal - CAP_PATIENTS);
+  // Target-end-census approach
+  // Goal: make all providers end at the same census (within 1-2)
+  const totalCurrentCensus = rounderStates.reduce((sum, r) => sum + r.currentCensus, 0);
+  const totalEnd = totalCurrentCensus + N;
+  const numRounders = rounderStates.length;
+  const targetEndLow = Math.floor(totalEnd / numRounders);
+  const targetEndHigh = targetEndLow + 1;
+  const numAtHigh = totalEnd % numRounders;
 
-        if (aOver !== bOver) return aOver - bOver;
+  // Calculate ideal quota for each rounder to reach target end census
+  // Sort by current census descending -- highest-census providers get targetEndLow first
+  const sortedForTarget = [...rounderStates].sort((a, b) => b.currentCensus - a.currentCensus);
+  let highSlotsRemaining = numAtHigh;
 
-        const aGeoMatch = !a.isFloating && a.floor === admission.floor ? 1 : 0;
-        const bGeoMatch = !b.isFloating && b.floor === admission.floor ? 1 : 0;
-        if (aGeoMatch !== bGeoMatch) return bGeoMatch - aGeoMatch;
-
-        if (aCurrentTotal !== bCurrentTotal) return aCurrentTotal - bCurrentTotal;
-
-        // Use localeCompare for string IDs (TeamLetter)
-        return a.id.localeCompare(b.id);
-      });
-
-      const targetRounder = sortedByOverage[0];
-      targetRounder.assignedPatients.push({
-        ...admission,
-        reason: 'overflow_waterfill'
-      });
-      targetRounder.assignedCount++;
-      result.metrics.overflowAssignments++;
-
-      assignmentCounter++;
-      result.assignmentOrder.push({
-        order: assignmentCounter,
-        patientId: admission.patientName,
-        floor: admission.floor,
-        assignedTo: targetRounder.name,
-        assignedToId: targetRounder.id,
-        assignedFloor: targetRounder.floor,
-        reason: 'overflow_waterfill',
-        reasonLabel: 'Overflow (Water-filling)'
-      });
-    });
-  } else {
-    // Normal mode: Target-end-census approach
-    // Goal: make all providers end at the same census (within 1-2)
-    // endCensus = currentCensus + quota, so quota = targetEnd - currentCensus
-    const totalCurrentCensus = rounderStates.reduce((sum, r) => sum + r.currentCensus, 0);
-    const totalEnd = totalCurrentCensus + N;
-    const numRounders = rounderStates.length;
-    const targetEndLow = Math.floor(totalEnd / numRounders);
-    const targetEndHigh = targetEndLow + 1;
-    const numAtHigh = totalEnd % numRounders; // exactly this many should end at targetEndHigh
-
-    // Calculate ideal quota for each rounder to reach target end census
-    // Sort by current census descending -- highest-census providers get targetEndLow first
-    const sortedForTarget = [...rounderStates].sort((a, b) => b.currentCensus - a.currentCensus);
-    let highSlotsRemaining = numAtHigh;
-
-    sortedForTarget.forEach(r => {
-      // Determine this rounder's target end census
-      let targetEnd: number;
-      if (highSlotsRemaining > 0 && r.currentCensus <= targetEndHigh) {
-        targetEnd = targetEndHigh;
-        highSlotsRemaining--;
-      } else {
-        targetEnd = targetEndLow;
-      }
-
-      // Quota = how many new patients to reach target (minimum 0, max = capacity)
-      const idealQuota = Math.max(0, targetEnd - r.currentCensus);
-      r.quota = Math.min(idealQuota, r.capacity);
-      r.remainingQuota = r.quota;
-    });
-
-    // Distribute any unassigned remainder (from rounding/capacity constraints)
-    // Give to provider with lowest projected end census
-    let assigned = rounderStates.reduce((sum, r) => sum + r.quota, 0);
-    let remaining = N - assigned;
-
-    while (remaining > 0) {
-      const eligible = rounderStates.filter(r => r.quota < r.capacity);
-      if (eligible.length === 0) break;
-
-      eligible.sort((a, b) => {
-        const aProjected = a.currentCensus + a.quota;
-        const bProjected = b.currentCensus + b.quota;
-        if (aProjected !== bProjected) return aProjected - bProjected;
-        if (a.capacity !== b.capacity) return b.capacity - a.capacity;
-        return a.id.localeCompare(b.id);
-      });
-
-      eligible[0].quota++;
-      eligible[0].remainingQuota++;
-      remaining--;
+  sortedForTarget.forEach(r => {
+    let targetEnd: number;
+    if (highSlotsRemaining > 0 && r.currentCensus <= targetEndHigh) {
+      targetEnd = targetEndHigh;
+      highSlotsRemaining--;
+    } else {
+      targetEnd = targetEndLow;
     }
 
-    // Stage A: Home-floor first
-    const assignedIndices = new Set<number>();
+    // Quota = how many new patients to reach target (minimum 0)
+    r.quota = Math.max(0, targetEnd - r.currentCensus);
+    r.remainingQuota = r.quota;
+  });
 
-    const patientsByFloor: Record<string, Array<{ patient: Admission; index: number }>> = {};
-    poolAdmissions.forEach((p, idx) => {
-      if (!patientsByFloor[p.floor]) patientsByFloor[p.floor] = [];
-      patientsByFloor[p.floor].push({ patient: p, index: idx });
+  // Distribute any unassigned remainder (from rounding constraints)
+  // Give to provider with lowest projected end census
+  let assigned = rounderStates.reduce((sum, r) => sum + r.quota, 0);
+  let remaining = N - assigned;
+
+  while (remaining > 0) {
+    const sorted = [...rounderStates].sort((a, b) => {
+      const aProjected = a.currentCensus + a.quota;
+      const bProjected = b.currentCensus + b.quota;
+      if (aProjected !== bProjected) return aProjected - bProjected;
+      return a.id.localeCompare(b.id);
     });
 
-    Object.keys(patientsByFloor).forEach(floor => {
-      const homeRounder = rounderStates.find(r => !r.isFloating && r.floor === floor);
-      if (!homeRounder || homeRounder.remainingQuota === 0) return;
-
-      const floorPatients = patientsByFloor[floor];
-      const toAssign = Math.min(homeRounder.remainingQuota, floorPatients.length);
-
-      for (let i = 0; i < toAssign; i++) {
-        const { patient, index } = floorPatients[i];
-        homeRounder.assignedPatients.push({
-          ...patient,
-          reason: 'geo_match_within_quota'
-        });
-        homeRounder.assignedCount++;
-        homeRounder.remainingQuota--;
-        assignedIndices.add(index);
-        result.metrics.geoMatches++;
-
-        assignmentCounter++;
-        result.assignmentOrder.push({
-          order: assignmentCounter,
-          patientId: patient.patientName,
-          floor: patient.floor,
-          assignedTo: homeRounder.name,
-          assignedToId: homeRounder.id,
-          assignedFloor: homeRounder.floor,
-          reason: 'geo_match_within_quota',
-          reasonLabel: 'Geographic Match (Home Floor)'
-        });
-      }
-    });
-
-    // Stage B: Spillover
-    poolAdmissions.forEach((patient, idx) => {
-      if (assignedIndices.has(idx)) return;
-
-      const eligible = rounderStates.filter(r => r.remainingQuota > 0);
-      if (eligible.length === 0) return;
-
-      eligible.sort((a, b) => {
-        const aGeoMatch = !a.isFloating && a.floor === patient.floor ? 1 : 0;
-        const bGeoMatch = !b.isFloating && b.floor === patient.floor ? 1 : 0;
-        if (aGeoMatch !== bGeoMatch) return bGeoMatch - aGeoMatch;
-
-        const aCensus = a.currentCensus + a.assignedCount;
-        const bCensus = b.currentCensus + b.assignedCount;
-        if (aCensus !== bCensus) return aCensus - bCensus;
-
-        const aRatio = a.quota > 0 ? a.remainingQuota / a.quota : 0;
-        const bRatio = b.quota > 0 ? b.remainingQuota / b.quota : 0;
-        if (bRatio !== aRatio) return bRatio - aRatio;
-
-        return a.id.localeCompare(b.id);
-      });
-
-      const targetRounder = eligible[0];
-      const isGeoMatch = !targetRounder.isFloating && targetRounder.floor === patient.floor;
-
-      targetRounder.assignedPatients.push({
-        ...patient,
-        reason: isGeoMatch ? 'geo_match_within_quota' : 'proportional_within_quota'
-      });
-      targetRounder.assignedCount++;
-      targetRounder.remainingQuota--;
-
-      if (isGeoMatch) {
-        result.metrics.geoMatches++;
-      } else {
-        result.metrics.proportionalAssignments++;
-      }
-
-      assignmentCounter++;
-      result.assignmentOrder.push({
-        order: assignmentCounter,
-        patientId: patient.patientName,
-        floor: patient.floor,
-        assignedTo: targetRounder.name,
-        assignedToId: targetRounder.id,
-        assignedFloor: targetRounder.floor,
-        reason: isGeoMatch ? 'geo_match_within_quota' : 'proportional_within_quota',
-        reasonLabel: isGeoMatch ? 'Geographic Match (Within Quota)' : 'Proportional (Quota-Based)'
-      });
-    });
-
-    // Safety net: assign any remaining unassigned patients
-    poolAdmissions.forEach((patient, idx) => {
-      if (assignedIndices.has(idx)) return;
-      const alreadyAssigned = result.assignmentOrder.some(a => a.patientId === patient.patientName);
-      if (alreadyAssigned) return;
-
-      const sorted = [...rounderStates].sort((a, b) => {
-        const aTotal = a.currentCensus + a.assignedCount;
-        const bTotal = b.currentCensus + b.assignedCount;
-        if (aTotal !== bTotal) return aTotal - bTotal;
-        return a.id.localeCompare(b.id);
-      });
-
-      const targetRounder = sorted[0];
-      targetRounder.assignedPatients.push({ ...patient, reason: 'safety_catchall' });
-      targetRounder.assignedCount++;
-      assignedIndices.add(idx);
-      result.metrics.proportionalAssignments++;
-
-      assignmentCounter++;
-      result.assignmentOrder.push({
-        order: assignmentCounter,
-        patientId: patient.patientName,
-        floor: patient.floor,
-        assignedTo: targetRounder.name,
-        assignedToId: targetRounder.id,
-        assignedFloor: targetRounder.floor,
-        reason: 'safety_catchall',
-        reasonLabel: 'Safety Catchall (Unmatched)'
-      });
-    });
+    sorted[0].quota++;
+    sorted[0].remainingQuota++;
+    remaining--;
   }
 
-  // Create summary
-  result.summary = rounderStates.map(r => {
-    const finalCensus = r.currentCensus + r.assignedCount;
-    const finalSlack = Math.max(0, CAP_PATIENTS - finalCensus) / CAP_PATIENTS;
-    const finalOverage = Math.max(0, finalCensus - CAP_PATIENTS);
+  // Stage A: Home-floor first
+  const assignedIndices = new Set<number>();
 
-    return {
-      rounderId: r.id,
-      rounderName: r.name,
-      floor: r.floor,
-      startCensus: r.currentCensus,
-      newAdmissions: r.assignedCount,
-      endCensus: finalCensus,
-      slack: finalSlack,
-      overage: finalOverage,
-      hitCap: finalCensus >= CAP_PATIENTS,
-      admissions: r.assignedPatients
-    };
+  const patientsByFloor: Record<string, Array<{ patient: Admission; index: number }>> = {};
+  poolAdmissions.forEach((p, idx) => {
+    if (!patientsByFloor[p.floor]) patientsByFloor[p.floor] = [];
+    patientsByFloor[p.floor].push({ patient: p, index: idx });
   });
+
+  Object.keys(patientsByFloor).forEach(floor => {
+    const homeRounder = rounderStates.find(r => !r.isFloating && r.floor === floor);
+    if (!homeRounder || homeRounder.remainingQuota === 0) return;
+
+    const floorPatients = patientsByFloor[floor];
+    const toAssign = Math.min(homeRounder.remainingQuota, floorPatients.length);
+
+    for (let i = 0; i < toAssign; i++) {
+      const { patient, index } = floorPatients[i];
+      homeRounder.assignedPatients.push({
+        ...patient,
+        reason: 'geo_match_within_quota'
+      });
+      homeRounder.assignedCount++;
+      homeRounder.remainingQuota--;
+      assignedIndices.add(index);
+      result.metrics.geoMatches++;
+
+      assignmentCounter++;
+      result.assignmentOrder.push({
+        order: assignmentCounter,
+        patientId: patient.patientName,
+        floor: patient.floor,
+        assignedTo: homeRounder.name,
+        assignedToId: homeRounder.id,
+        assignedFloor: homeRounder.floor,
+        reason: 'geo_match_within_quota',
+        reasonLabel: 'Geographic Match (Home Floor)'
+      });
+    }
+  });
+
+  // Stage B: Spillover
+  poolAdmissions.forEach((patient, idx) => {
+    if (assignedIndices.has(idx)) return;
+
+    const eligible = rounderStates.filter(r => r.remainingQuota > 0);
+    if (eligible.length === 0) return;
+
+    eligible.sort((a, b) => {
+      const aGeoMatch = !a.isFloating && a.floor === patient.floor ? 1 : 0;
+      const bGeoMatch = !b.isFloating && b.floor === patient.floor ? 1 : 0;
+      if (aGeoMatch !== bGeoMatch) return bGeoMatch - aGeoMatch;
+
+      const aCensus = a.currentCensus + a.assignedCount;
+      const bCensus = b.currentCensus + b.assignedCount;
+      if (aCensus !== bCensus) return aCensus - bCensus;
+
+      const aRatio = a.quota > 0 ? a.remainingQuota / a.quota : 0;
+      const bRatio = b.quota > 0 ? b.remainingQuota / b.quota : 0;
+      if (bRatio !== aRatio) return bRatio - aRatio;
+
+      return a.id.localeCompare(b.id);
+    });
+
+    const targetRounder = eligible[0];
+    const isGeoMatch = !targetRounder.isFloating && targetRounder.floor === patient.floor;
+
+    targetRounder.assignedPatients.push({
+      ...patient,
+      reason: isGeoMatch ? 'geo_match_within_quota' : 'proportional_within_quota'
+    });
+    targetRounder.assignedCount++;
+    targetRounder.remainingQuota--;
+
+    if (isGeoMatch) {
+      result.metrics.geoMatches++;
+    } else {
+      result.metrics.proportionalAssignments++;
+    }
+
+    assignmentCounter++;
+    result.assignmentOrder.push({
+      order: assignmentCounter,
+      patientId: patient.patientName,
+      floor: patient.floor,
+      assignedTo: targetRounder.name,
+      assignedToId: targetRounder.id,
+      assignedFloor: targetRounder.floor,
+      reason: isGeoMatch ? 'geo_match_within_quota' : 'proportional_within_quota',
+      reasonLabel: isGeoMatch ? 'Geographic Match (Within Quota)' : 'Proportional (Quota-Based)'
+    });
+  });
+
+  // Safety net: assign any remaining unassigned patients
+  poolAdmissions.forEach((patient, idx) => {
+    if (assignedIndices.has(idx)) return;
+    const alreadyAssigned = result.assignmentOrder.some(a => a.patientId === patient.patientName);
+    if (alreadyAssigned) return;
+
+    const sorted = [...rounderStates].sort((a, b) => {
+      const aTotal = a.currentCensus + a.assignedCount;
+      const bTotal = b.currentCensus + b.assignedCount;
+      if (aTotal !== bTotal) return aTotal - bTotal;
+      return a.id.localeCompare(b.id);
+    });
+
+    const targetRounder = sorted[0];
+    targetRounder.assignedPatients.push({ ...patient, reason: 'safety_catchall' });
+    targetRounder.assignedCount++;
+    assignedIndices.add(idx);
+    result.metrics.proportionalAssignments++;
+
+    assignmentCounter++;
+    result.assignmentOrder.push({
+      order: assignmentCounter,
+      patientId: patient.patientName,
+      floor: patient.floor,
+      assignedTo: targetRounder.name,
+      assignedToId: targetRounder.id,
+      assignedFloor: targetRounder.floor,
+      reason: 'safety_catchall',
+      reasonLabel: 'Safety Catchall (Unmatched)'
+    });
+  });
+
+  // Create summary
+  result.summary = rounderStates.map(r => ({
+    rounderId: r.id,
+    rounderName: r.name,
+    floor: r.floor,
+    startCensus: r.currentCensus,
+    newAdmissions: r.assignedCount,
+    endCensus: r.currentCensus + r.assignedCount,
+    admissions: r.assignedPatients
+  }));
 
   result.assignments = rounderStates.reduce((acc, r) => {
     acc[r.id] = r;
