@@ -1,9 +1,10 @@
 import { useState, useCallback } from 'react';
-import { ChevronLeft, ChevronRight, Download, RotateCcw, Trash2, Check, Plus, UserMinus, Shuffle } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Download, RotateCcw, Trash2, Check, Plus, UserMinus, Shuffle, Mic } from 'lucide-react';
 import type { Rounder, Admission, DistributionResult, TeamLetter, WizardStep, CensusSnapshot } from '../types';
 import { TEAM_FLOORS } from '../types';
 import { SaturdayTransition } from './SaturdayTransition';
 import { BulkImport } from './BulkImport';
+import { VoiceImport } from './VoiceImport';
 import { CensusSnapshotView } from './CensusSnapshot';
 import { AssignmentOrder } from './AssignmentOrder';
 import { FlowChart } from './FlowChart';
@@ -367,6 +368,15 @@ export function WeekendWizard({
             <div>
               <h2 className="text-xl font-semibold text-blue-400 mb-1">Step 3: Enter Admissions</h2>
               <p className="text-sm text-gray-400">Add swing shift and nocturnist admissions to the pool.</p>
+            </div>
+
+            {/* Voice Import */}
+            <div className="bg-gray-700/30 border border-purple-600/50 rounded-lg p-4">
+              <h3 className="text-sm font-semibold text-purple-400 mb-3 flex items-center gap-2">
+                <Mic className="w-4 h-4" />
+                Speak Admissions
+              </h3>
+              <VoiceImport onImport={onBulkAddAdmissions} />
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
