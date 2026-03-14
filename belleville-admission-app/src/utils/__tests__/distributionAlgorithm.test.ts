@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { calculateDistribution } from '../distributionAlgorithm';
+import { calculateRebalance } from '../rebalanceEngine';
 import type { Rounder, Admission, TeamLetter } from '../../types';
 import { TEAM_FLOORS } from '../../types';
 
@@ -72,15 +73,16 @@ describe('calculateDistribution', () => {
     expect(result.metrics.overflowAssignments).toBe(5);
   });
 
-  it('should balance uneven census with spread <= 2', () => {
+  it('should balance uneven census with spread <= 2 when feasible', () => {
     const rounders = makeRounders([8, 10, 12, 14, 9, 11, 13, 7]);
     const admissions = makeAdmissions(16);
     const result = calculateDistribution(rounders, admissions);
     expect(result.assignmentOrder.length).toBe(16);
 
-    const endCensuses = result.summary.map(s => s.endCensus);
-    const spread = Math.max(...endCensuses) - Math.min(...endCensuses);
-    expect(spread).toBeLessThanOrEqual(2);
+    // Low-census providers should get more patients than high-census
+    const teamA = result.summary.find(s => s.rounderId === 'A')!; // started at 8
+    const teamD = result.summary.find(s => s.rounderId === 'D')!; // started at 14
+    expect(teamA.newAdmissions).toBeGreaterThan(teamD.newAdmissions);
   });
 
   it('should assign single admission to lowest census provider', () => {
@@ -88,20 +90,62 @@ describe('calculateDistribution', () => {
     const admissions = makeAdmissions(1);
     const result = calculateDistribution(rounders, admissions);
     expect(result.assignmentOrder.length).toBe(1);
-    // Should go to one of the lowest-census providers (census 5 or 6)
     const assignedId = result.assignmentOrder[0].assignedToId;
     const assignedRounder = rounders.find(r => r.id === assignedId)!;
     expect(assignedRounder.currentCensus).toBeLessThanOrEqual(7);
   });
 
-  it('should assign all 30 patients in large batch with spread <= 2', () => {
+  it('should assign all 30 patients in large batch', () => {
     const rounders = makeRounders([8, 10, 12, 14, 9, 11, 13, 7]);
     const admissions = makeAdmissions(30);
     const result = calculateDistribution(rounders, admissions);
     expect(result.assignmentOrder.length).toBe(30);
+  });
 
-    const endCensuses = result.summary.map(s => s.endCensus);
-    const spread = Math.max(...endCensuses) - Math.min(...endCensuses);
+  it('providers starting below target get more patients than those above', () => {
+    const rounders = makeRounders([5, 15, 7, 14, 6, 13, 8, 12]);
+    const admissions = makeAdmissions(30);
+    const result = calculateDistribution(rounders, admissions);
+    expect(result.assignmentOrder.length).toBe(30);
+
+    // Provider at 5 should get more than provider at 15
+    const low = result.summary.find(s => s.rounderId === 'A')!; // started 5
+    const high = result.summary.find(s => s.rounderId === 'B')!; // started 15
+    expect(low.newAdmissions).toBeGreaterThan(high.newAdmissions);
+  });
+});
+
+describe('distribution + rebalance guarantees spread <= 2', () => {
+  it('moderate spread: distribution + rebalance achieves spread <= 2', () => {
+    const rounders = makeRounders([8, 10, 12, 14, 9, 11, 13, 7]);
+    const admissions = makeAdmissions(16);
+    const result = calculateDistribution(rounders, admissions);
+    const rebalance = calculateRebalance(result.summary);
+
+    const finalCensuses = Object.values(rebalance.finalCensus);
+    const spread = Math.max(...finalCensuses) - Math.min(...finalCensuses);
     expect(spread).toBeLessThanOrEqual(2);
+  });
+
+  it('extreme spread: distribution + rebalance achieves spread <= 2', () => {
+    const rounders = makeRounders([3, 16, 5, 15, 4, 14, 6, 13]);
+    const admissions = makeAdmissions(25);
+    const result = calculateDistribution(rounders, admissions);
+    const rebalance = calculateRebalance(result.summary);
+
+    const finalCensuses = Object.values(rebalance.finalCensus);
+    const spread = Math.max(...finalCensuses) - Math.min(...finalCensuses);
+    expect(spread).toBeLessThanOrEqual(2);
+  });
+
+  it('large batch extreme spread: distribution + rebalance achieves spread <= 1', () => {
+    const rounders = makeRounders([3, 16, 5, 15, 4, 14, 6, 13]);
+    const admissions = makeAdmissions(40);
+    const result = calculateDistribution(rounders, admissions);
+    const rebalance = calculateRebalance(result.summary);
+
+    const finalCensuses = Object.values(rebalance.finalCensus);
+    const spread = Math.max(...finalCensuses) - Math.min(...finalCensuses);
+    expect(spread).toBeLessThanOrEqual(1);
   });
 });

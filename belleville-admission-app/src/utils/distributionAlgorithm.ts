@@ -109,64 +109,39 @@ export function calculateDistribution(
       });
     });
   } else {
-    // Normal mode: Calculate quotas
-    const totalWeight = rounderStates.reduce((sum, r) => sum + r.weight, 0);
+    // Normal mode: Target-end-census approach
+    // Goal: make all providers end at the same census (within 1-2)
+    // endCensus = currentCensus + quota, so quota = targetEnd - currentCensus
+    const totalCurrentCensus = rounderStates.reduce((sum, r) => sum + r.currentCensus, 0);
+    const totalEnd = totalCurrentCensus + N;
+    const numRounders = rounderStates.length;
+    const targetEndLow = Math.floor(totalEnd / numRounders);
+    const targetEndHigh = targetEndLow + 1;
+    const numAtHigh = totalEnd % numRounders; // exactly this many should end at targetEndHigh
 
-    rounderStates.forEach(r => {
-      const rawQuota = totalWeight > 0 ? (r.weight / totalWeight) * N : 0;
-      r.quota = Math.min(Math.floor(rawQuota), r.capacity);
-      r.remainder = rawQuota - Math.floor(rawQuota);
+    // Calculate ideal quota for each rounder to reach target end census
+    // Sort by current census descending -- highest-census providers get targetEndLow first
+    const sortedForTarget = [...rounderStates].sort((a, b) => b.currentCensus - a.currentCensus);
+    let highSlotsRemaining = numAtHigh;
+
+    sortedForTarget.forEach(r => {
+      // Determine this rounder's target end census
+      let targetEnd: number;
+      if (highSlotsRemaining > 0 && r.currentCensus <= targetEndHigh) {
+        targetEnd = targetEndHigh;
+        highSlotsRemaining--;
+      } else {
+        targetEnd = targetEndLow;
+      }
+
+      // Quota = how many new patients to reach target (minimum 0, max = capacity)
+      const idealQuota = Math.max(0, targetEnd - r.currentCensus);
+      r.quota = Math.min(idealQuota, r.capacity);
       r.remainingQuota = r.quota;
     });
 
-    // Apply census-based adjustment to balance distribution
-    // This increases quotas for low-census doctors and decreases for high-census doctors
-    const avgCensus = rounderStates.reduce((sum, r) => sum + r.currentCensus, 0) / rounderStates.length;
-    const censusAdjustmentFactor = 0.35; // Adjustment strength per census point difference (balanced)
-
-    // Calculate adjustments
-    const adjustments: { rounder: RounderState; adjustment: number }[] = [];
-    rounderStates.forEach(r => {
-      const censusDiff = r.currentCensus - avgCensus;
-      // Positive censusDiff (above average) -> negative adjustment (get fewer patients)
-      // Negative censusDiff (below average) -> positive adjustment (get more patients)
-      const rawAdjustment = -censusDiff * censusAdjustmentFactor;
-      const adjustment = Math.round(rawAdjustment);
-      adjustments.push({ rounder: r, adjustment });
-    });
-
-    // Apply adjustments while respecting capacity constraints
-    adjustments.forEach(({ rounder, adjustment }) => {
-      if (adjustment > 0) {
-        // Increase quota for low-census doctors (below average)
-        const maxIncrease = rounder.capacity - rounder.quota;
-        const actualIncrease = Math.min(adjustment, maxIncrease);
-        rounder.quota += actualIncrease;
-        rounder.remainingQuota += actualIncrease;
-      } else if (adjustment < 0) {
-        // Decrease quota for high-census doctors (above average)
-        const maxDecrease = rounder.quota;
-        const actualDecrease = Math.min(Math.abs(adjustment), maxDecrease);
-        rounder.quota -= actualDecrease;
-        rounder.remainingQuota -= actualDecrease;
-      }
-    });
-
-    // Normalize quotas so total doesn't exceed N
-    const totalQuota = rounderStates.reduce((sum, r) => sum + r.quota, 0);
-    if (totalQuota > N) {
-      let excess = totalQuota - N;
-      const sortedByQuota = [...rounderStates].sort((a, b) => b.quota - a.quota);
-      for (const r of sortedByQuota) {
-        if (excess <= 0) break;
-        const reduction = Math.min(r.quota, excess);
-        r.quota -= reduction;
-        r.remainingQuota -= reduction;
-        excess -= reduction;
-      }
-    }
-
-    // Census-aware gap-filling for remainder patients
+    // Distribute any unassigned remainder (from rounding/capacity constraints)
+    // Give to provider with lowest projected end census
     let assigned = rounderStates.reduce((sum, r) => sum + r.quota, 0);
     let remaining = N - assigned;
 
